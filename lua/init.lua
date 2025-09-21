@@ -208,10 +208,9 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- One-liner heuristic:
--- If this owner is a closure parameter list and the enclosing closure's
--- *text* has no newline, treat it as a single-line span (►'a).
+-- One-liner heuristics
 local function owner_is_oneline(owner, buf)
+	-- Treat a closure's params as one-line if the whole closure text is one line.
 	if owner:type() ~= "closure_parameters" then
 		return false
 	end
@@ -224,6 +223,17 @@ local function owner_is_oneline(owner, buf)
 	end
 	local txt = vim.treesitter.get_node_text(cur, buf) or ""
 	return not txt:find("\n")
+end
+
+local function looks_oneline(s, e, owner, buf)
+	if e == s then
+		return true
+	end
+	-- rust-analyzer often returns e == s+1 for tiny closures; coerce to one line.
+	if e == s + 1 then
+		return true
+	end
+	return owner_is_oneline(owner, buf)
 end
 
 -- ────────────── composite painter per function/closure ──────────────
@@ -373,12 +383,15 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 						eline = sline
 					end
 
-					local is_one = (eline == sline) or owner_is_oneline(owner, buf)
+					local one = looks_oneline(sline, eline, owner, buf)
+					if one then
+						eline = sline
+					end -- clamp so painter draws ► and no tail/body
 
 					lanes[#lanes + 1] = {
 						s = sline,
 						e = eline,
-						one = is_one,
+						one = one,
 						label = "'" .. string.char(97 + (#lanes % 26)),
 					}
 				end
