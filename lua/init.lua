@@ -1,5 +1,5 @@
 -- Rust Lifetimes: visualize rough Rust lifetimes using Tree-sitter + rust-analyzer (optional).
--- Composite painter with proper columns, elbows, and branch tees.
+-- Composite painter with proper columns, elbows, tees, and compact one-liners (►'a).
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -21,9 +21,8 @@ local LANE_HL = {
 }
 
 -- refresh control (debounce + generation guard)
-local GEN = {} -- per-buf generation counters
-local TIMERS = {} -- per-buf uv timers for debounce
-local DEBOUNCE_MS = 60 -- tune to taste
+local GEN, TIMERS = {}, {}
+local DEBOUNCE_MS = 60
 
 -- global enable/disable
 local ENABLED = true
@@ -216,7 +215,6 @@ local function paint_group(buf, lanes, token)
 		return
 	end
 
-	-- lane highlight selection (cyclic)
 	local function lane_hl(idx)
 		local name = LANE_HL[((idx - 1) % #LANE_HL) + 1]
 		if name == "DiagnosticOk" and vim.fn.hlexists("DiagnosticOk") ~= 1 then
@@ -239,7 +237,6 @@ local function paint_group(buf, lanes, token)
 	end
 
 	-- pre-pad cells we use
-	-- local CELL_BODY = pad_cell "│"
 	local CELL_TAIL = pad_cell("└►")
 	local CELL_BLNK = pad_cell(" ")
 
@@ -260,10 +257,14 @@ local function paint_group(buf, lanes, token)
 		for idx, L in ipairs(lanes) do
 			local cell
 			if line == L.s then
-				cell = pad_cell("┌" .. L.label) -- head
-			elseif line == L.e and L.e > L.s then
-				cell = CELL_TAIL -- tail
-			elseif line > L.s and line < L.e then
+				if L.one then
+					cell = pad_cell("►" .. L.label) -- compact one-liner
+				else
+					cell = pad_cell("┌" .. L.label) -- multi-line head
+				end
+			elseif not L.one and line == L.e and L.e > L.s then
+				cell = CELL_TAIL -- multi-line tail
+			elseif not L.one and line > L.s and line < L.e then
 				local tee = false
 				local starters = starts_on_line[line]
 				if starters then
@@ -274,7 +275,7 @@ local function paint_group(buf, lanes, token)
 						end
 					end
 				end
-				cell = pad_cell(tee and "├" or "│")
+				cell = pad_cell(tee and "├" or "│") -- body with optional tee
 			else
 				cell = CELL_BLNK
 			end
@@ -308,8 +309,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	if not trees or not trees[1] then
 		return
 	end
-	local tree = trees[1]
-	local root = tree:root()
+	local root = trees[1]:root()
 
 	local has_ra = false
 	for _, c in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
@@ -364,13 +364,11 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 					if eline < sline then
 						eline = sline
 					end
-					-- ensure at least a head + tail on the next line
-					if eline == sline then
-						eline = math.min(gend, sline + 1)
-					end
+					local is_one = (eline == sline) -- mark true one-liners
 					lanes[#lanes + 1] = {
 						s = sline,
 						e = eline,
+						one = is_one,
 						label = "'" .. string.char(97 + (#lanes % 26)),
 					}
 				end
@@ -389,18 +387,22 @@ local function schedule_refresh(buf)
 		clear_buf(buf)
 		return
 	end
+
 	-- cancel previous timer for this buffer
 	if TIMERS[buf] then
 		TIMERS[buf]:stop()
 		TIMERS[buf]:close()
 		TIMERS[buf] = nil
 	end
+
 	local timer = vim.uv.new_timer()
 	TIMERS[buf] = timer
 	timer:start(DEBOUNCE_MS, 0, function()
-		TIMERS[buf]:stop()
-		TIMERS[buf]:close()
-		TIMERS[buf] = nil
+		if TIMERS[buf] then
+			TIMERS[buf]:stop()
+			TIMERS[buf]:close()
+			TIMERS[buf] = nil
+		end
 		vim.schedule(function()
 			GEN[buf] = (GEN[buf] or 0) + 1
 			local token = GEN[buf]
@@ -455,8 +457,7 @@ function M.setup()
 		end,
 	})
 
-	-- vim.keymap.set("n", "<leader>rl", ":RustLifetimesRefresh<CR>", { desc = "Refresh Rust lifetimes" })
-	-- vim.keymap.set("n", "<leader>rt", ":RustLifetimesToggle<CR>", { desc = "Toggle Rust lifetimes" })
+	-- keymaps are up to the user environment (Astro/Lazy/etc.)
 end
 
 return M
