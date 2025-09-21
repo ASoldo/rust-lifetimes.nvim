@@ -1,4 +1,3 @@
--- plugin/rust-lifetimes.lua
 -- Auto-enable on Rust buffers if user didn't call setup themselves.
 vim.api.nvim_create_autocmd({ "BufReadPre", "BufNewFile" }, {
 	pattern = "*.rs",
