@@ -1,3 +1,5 @@
+<img width="948" height="1038" alt="image" src="https://github.com/user-attachments/assets/26d617d0-5995-47c3-be42-3a448dc34b1a" />
+
 # Rust Lifetimes NVIM Plugin
 
 Visualize rough Rust lifetimes directly in Neovim using Tree-sitter and rust-analyzer. This plugin draws lane-style annotations in the right margin to help understand borrow scopes and overlaps.
