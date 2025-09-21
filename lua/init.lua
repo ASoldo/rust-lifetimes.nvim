@@ -208,9 +208,10 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- One-liner heuristic: if this owner is a closure param and the enclosing closure
--- expression begins/ends on the same line, force a one-line span.
-local function owner_is_oneline(owner)
+-- One-liner heuristic:
+-- If this owner is a closure parameter list and the enclosing closure's
+-- *text* has no newline, treat it as a single-line span (►'a).
+local function owner_is_oneline(owner, buf)
 	if owner:type() ~= "closure_parameters" then
 		return false
 	end
@@ -221,8 +222,8 @@ local function owner_is_oneline(owner)
 	if not cur then
 		return false
 	end
-	local s, _, e = cur:range()
-	return s == e
+	local txt = vim.treesitter.get_node_text(cur, buf) or ""
+	return not txt:find("\n")
 end
 
 -- ────────────── composite painter per function/closure ──────────────
@@ -372,7 +373,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 						eline = sline
 					end
 
-					local is_one = (eline == sline) or owner_is_oneline(owner)
+					local is_one = (eline == sline) or owner_is_oneline(owner, buf)
 
 					lanes[#lanes + 1] = {
 						s = sline,
