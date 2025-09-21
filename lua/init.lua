@@ -14,10 +14,10 @@ local LANE_CELL = 5 -- visual columns per lane “cell”
 
 -- optional lane colors; link to existing groups to avoid theme fights
 local LANE_HL = {
-	"DiagnosticHint", -- lane 1
-	"DiagnosticInfo", -- lane 2
-	"DiagnosticWarn", -- lane 3
-	"DiagnosticOk", -- lane 4 (Neovim 0.10+), fallback handled below
+	"DiagnosticHint",
+	"DiagnosticInfo",
+	"DiagnosticWarn",
+	"DiagnosticOk", -- Neovim 0.10+, falls back below
 }
 
 -- refresh control (debounce + generation guard)
@@ -46,7 +46,6 @@ local query = ts.query.parse(
 
 -- ───────────────────── utils ─────────────────────
 
--- pad to visual width by adding spaces on the RIGHT, not the left
 local function pad_cell(s)
 	local w = vim.fn.strdisplaywidth(s)
 	if w < LANE_CELL then
@@ -209,6 +208,23 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
+-- One-liner heuristic: if this owner is a closure param and the enclosing closure
+-- expression begins/ends on the same line, force a one-line span.
+local function owner_is_oneline(owner)
+	if owner:type() ~= "closure_parameters" then
+		return false
+	end
+	local cur = owner
+	while cur and cur:type() ~= "closure_expression" do
+		cur = cur:parent()
+	end
+	if not cur then
+		return false
+	end
+	local s, _, e = cur:range()
+	return s == e
+end
+
 -- ────────────── composite painter per function/closure ──────────────
 local function paint_group(buf, lanes, token)
 	if #lanes == 0 then
@@ -225,7 +241,6 @@ local function paint_group(buf, lanes, token)
 
 	local margin = string.rep(" ", RIGHT_MARGIN_PAD)
 
-	-- compute min/max lines we need to draw
 	local minl, maxl = math.huge, -1
 	for _, L in ipairs(lanes) do
 		if L.s < minl then
@@ -236,11 +251,9 @@ local function paint_group(buf, lanes, token)
 		end
 	end
 
-	-- pre-pad cells we use
 	local CELL_TAIL = pad_cell("└►")
 	local CELL_BLNK = pad_cell(" ")
 
-	-- fast lookup for branch tees
 	local starts_on_line = {}
 	for idx, L in ipairs(lanes) do
 		local t = starts_on_line[L.s] or {}
@@ -257,13 +270,9 @@ local function paint_group(buf, lanes, token)
 		for idx, L in ipairs(lanes) do
 			local cell
 			if line == L.s then
-				if L.one then
-					cell = pad_cell("►" .. L.label) -- compact one-liner
-				else
-					cell = pad_cell("┌" .. L.label) -- multi-line head
-				end
+				cell = pad_cell((L.one and "►" or "┌") .. L.label)
 			elseif not L.one and line == L.e and L.e > L.s then
-				cell = CELL_TAIL -- multi-line tail
+				cell = CELL_TAIL
 			elseif not L.one and line > L.s and line < L.e then
 				local tee = false
 				local starters = starts_on_line[line]
@@ -275,7 +284,7 @@ local function paint_group(buf, lanes, token)
 						end
 					end
 				end
-				cell = pad_cell(tee and "├" or "│") -- body with optional tee
+				cell = pad_cell(tee and "├" or "│")
 			else
 				cell = CELL_BLNK
 			end
@@ -319,7 +328,6 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		end
 	end
 
-	-- Clear once right before painting, under the current token.
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 
 	local lanes, last_group_start = {}, -1
@@ -331,7 +339,6 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		lanes = {}
 	end
 
-	-- Build lanes (token-checked mid-loop)
 	for id, owner in query:iter_captures(root, buf, 0, -1) do
 		if token ~= GEN[buf] then
 			return
@@ -364,7 +371,9 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 					if eline < sline then
 						eline = sline
 					end
-					local is_one = (eline == sline) -- mark true one-liners
+
+					local is_one = (eline == sline) or owner_is_oneline(owner)
+
 					lanes[#lanes + 1] = {
 						s = sline,
 						e = eline,
@@ -388,7 +397,6 @@ local function schedule_refresh(buf)
 		return
 	end
 
-	-- cancel previous timer for this buffer
 	if TIMERS[buf] then
 		TIMERS[buf]:stop()
 		TIMERS[buf]:close()
@@ -405,8 +413,7 @@ local function schedule_refresh(buf)
 		end
 		vim.schedule(function()
 			GEN[buf] = (GEN[buf] or 0) + 1
-			local token = GEN[buf]
-			_G.__rust_lifetimes_refresh(buf, token)
+			_G.__rust_lifetimes_refresh(buf, GEN[buf])
 		end)
 	end)
 end
@@ -417,7 +424,6 @@ function M.setup()
 		schedule_refresh(vim.api.nvim_get_current_buf())
 	end, {})
 
-	-- toggle command
 	vim.api.nvim_create_user_command("RustLifetimesToggle", function()
 		ENABLED = not ENABLED
 		local buf = vim.api.nvim_get_current_buf()
@@ -456,8 +462,6 @@ function M.setup()
 			end
 		end,
 	})
-
-	-- keymaps are up to the user environment (Astro/Lazy/etc.)
 end
 
 return M
