@@ -1,5 +1,6 @@
 -- Rust Lifetimes: visualize rough Rust lifetimes using Tree-sitter + rust-analyzer (optional).
--- Composite painter with proper columns, elbows, tees, and compact one-liners (►'a).
+-- Composite painter with proper columns, elbows, tees, compact one-liners (►'a),
+-- and dotted closure segments (◦ + ┆ ... ┆).
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -10,7 +11,7 @@ local HOVER_TIMEOUT, REFS_TIMEOUT = 1200, 1200
 
 -- spacing knobs
 local RIGHT_MARGIN_PAD = 6 -- spaces from window edge
-local LANE_CELL = 5 -- visual columns per lane “cell”
+local LANE_CELL = 5        -- visual columns per lane “cell”
 
 -- optional lane colors; link to existing groups to avoid theme fights
 local LANE_HL = {
@@ -208,9 +209,8 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- One-liner heuristics
+-- One-liner heuristic (true single-line)
 local function owner_is_oneline(owner, buf)
-	-- Treat a closure's params as one-line if the whole closure text is one line.
 	if owner:type() ~= "closure_parameters" then
 		return false
 	end
@@ -229,11 +229,46 @@ local function looks_oneline(s, e, owner, buf)
 	if e == s then
 		return true
 	end
-	-- rust-analyzer often returns e == s+1 for tiny closures; coerce to one line.
 	if e == s + 1 then
 		return true
 	end
 	return owner_is_oneline(owner, buf)
+end
+
+-- Detect a closure on (or very near) the same statement and return its line span.
+local function find_closure_span_near(owner, buf)
+	local sline = select(1, owner:range())
+	-- Climb a few ancestors to find a compact statement container that starts on the same line.
+	local anc, hops = owner:parent(), 0
+	while anc and hops < 4 do
+		local as, _, _ = anc:range()
+		if as == sline then
+			break
+		end
+		anc = anc:parent()
+		hops = hops + 1
+	end
+	local base = anc or owner
+
+	local found = nil
+	local function walk(n)
+		if found then
+			return
+		end
+		if n:type() == "closure_expression" then
+			local cs, _, ce = n:range()
+			found = { cs = cs, ce = ce }
+			return
+		end
+		for i = 0, n:child_count() - 1 do
+			walk(n:child(i))
+			if found then
+				return
+			end
+		end
+	end
+	walk(base)
+	return found
 end
 
 -- ────────────── composite painter per function/closure ──────────────
@@ -264,6 +299,7 @@ local function paint_group(buf, lanes, token)
 
 	local CELL_TAIL = pad_cell("└►")
 	local CELL_BLNK = pad_cell(" ")
+	local CELL_DOT = pad_cell("┆") -- dotted vertical
 
 	local starts_on_line = {}
 	for idx, L in ipairs(lanes) do
@@ -280,25 +316,39 @@ local function paint_group(buf, lanes, token)
 
 		for idx, L in ipairs(lanes) do
 			local cell
+			local in_dotted = L.dot_s and L.dot_e and (line >= L.dot_s and line <= L.dot_e)
+
 			if line == L.s then
-				cell = pad_cell((L.one and "►" or "┌") .. L.label)
+				if L.one then
+					cell = pad_cell("►" .. L.label)
+				elseif in_dotted and L.dot_s == L.s then
+					cell = pad_cell("◦" .. L.label) -- dotted head for closure segment
+				else
+					cell = pad_cell("┌" .. L.label) -- normal head
+				end
 			elseif not L.one and line == L.e and L.e > L.s then
+				-- tail (normal tail even if dotted previously)
 				cell = CELL_TAIL
 			elseif not L.one and line > L.s and line < L.e then
-				local tee = false
-				local starters = starts_on_line[line]
-				if starters then
-					for _, j in ipairs(starters) do
-						if j > idx then
-							tee = true
-							break
+				if in_dotted then
+					cell = CELL_DOT
+				else
+					local tee = false
+					local starters = starts_on_line[line]
+					if starters then
+						for _, j in ipairs(starters) do
+							if j > idx then
+								tee = true
+								break
+							end
 						end
 					end
+					cell = pad_cell(tee and "├" or "│")
 				end
-				cell = pad_cell(tee and "├" or "│")
 			else
 				cell = CELL_BLNK
 			end
+
 			chunks[#chunks + 1] = { cell, lane_hl(idx) }
 		end
 
@@ -386,12 +436,26 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 					local one = looks_oneline(sline, eline, owner, buf)
 					if one then
 						eline = sline
-					end -- clamp so painter draws ► and no tail/body
+					end -- clamp for one-liner
+
+					-- detect a closure span on the same statement and mark as dotted segment
+					local dot = find_closure_span_near(owner, buf)
+					local dot_s, dot_e = nil, nil
+					if dot and not one then
+						-- Intersect with our lane span (only if it actually overlaps)
+						local ds = math.max(sline, dot.cs)
+						local de = math.min(eline, dot.ce)
+						if de >= ds then
+							dot_s, dot_e = ds, de
+						end
+					end
 
 					lanes[#lanes + 1] = {
 						s = sline,
 						e = eline,
 						one = one,
+						dot_s = dot_s,
+						dot_e = dot_e,
 						label = "'" .. string.char(97 + (#lanes % 26)),
 					}
 				end
