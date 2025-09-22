@@ -164,9 +164,10 @@ local function hover_is_ref(buf, ident)
 			if txt and #txt > 0 and (txt:find("&%s*mut") or txt:find("&%S")) then
 				return true
 			end
+			return false
 		end
 	end
-	return false
+	return nil
 end
 
 local function syntax_is_ref(owner, buf)
@@ -209,6 +210,38 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
+-- Pattern/type is explicitly a reference? (used to gate let-declarations)
+local function pattern_is_reference(owner, buf)
+	local pat = owner:field("pattern")[1]
+	local ty = owner:field("type")[1]
+	local function has_ref_node(n)
+		if not n then
+			return false
+		end
+		if n:type() == "reference_type" then
+			return true
+		end
+		for i = 0, n:child_count() - 1 do
+			if has_ref_node(n:child(i)) then
+				return true
+			end
+		end
+		return false
+	end
+	if has_ref_node(ty) then
+		return true
+	end
+	local ptxt = pat and (vim.treesitter.get_node_text(pat, buf) or "") or ""
+	if ptxt:find("&") then
+		return true
+	end
+	local ttxt = ty and (vim.treesitter.get_node_text(ty, buf) or "") or ""
+	if ttxt:find("&") then
+		return true
+	end
+	return false
+end
+
 -- One-liner heuristic (true single-line)
 local function owner_is_oneline(owner, buf)
 	if owner:type() ~= "closure_parameters" then
@@ -235,13 +268,12 @@ local function looks_oneline(s, e, owner, buf)
 	return owner_is_oneline(owner, buf)
 end
 
--- Detect a closure on (or very near) the same statement and return its line span.
+-- Find a closure on the same statement (for dotted segment)
 local function find_closure_span_near(owner, buf)
 	local sline = select(1, owner:range())
-	-- Climb a few ancestors to find a compact statement container that starts on the same line.
 	local anc, hops = owner:parent(), 0
 	while anc and hops < 4 do
-		local as, _, _ = anc:range()
+		local as = select(1, anc:range())
 		if as == sline then
 			break
 		end
@@ -249,8 +281,7 @@ local function find_closure_span_near(owner, buf)
 		hops = hops + 1
 	end
 	local base = anc or owner
-
-	local found = nil
+	local found
 	local function walk(n)
 		if found then
 			return
@@ -299,7 +330,7 @@ local function paint_group(buf, lanes, token)
 
 	local CELL_TAIL = pad_cell("└►")
 	local CELL_BLNK = pad_cell(" ")
-	local CELL_DOT = pad_cell("┆") -- dotted vertical
+	local CELL_DOT = pad_cell("┆")
 
 	local starts_on_line = {}
 	for idx, L in ipairs(lanes) do
@@ -322,12 +353,11 @@ local function paint_group(buf, lanes, token)
 				if L.one then
 					cell = pad_cell("►" .. L.label)
 				elseif in_dotted and L.dot_s == L.s then
-					cell = pad_cell("◦" .. L.label) -- dotted head for closure segment
+					cell = pad_cell("◦" .. L.label)
 				else
-					cell = pad_cell("┌" .. L.label) -- normal head
+					cell = pad_cell("┌" .. L.label)
 				end
 			elseif not L.one and line == L.e and L.e > L.s then
-				-- tail (normal tail even if dotted previously)
 				cell = CELL_TAIL
 			elseif not L.one and line > L.s and line < L.e then
 				if in_dotted then
@@ -411,13 +441,30 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 				last_group_start = gstart
 			end
 
+			local typ = owner:type()
 			local is_ref = syntax_is_ref(owner, buf)
-			if not is_ref and has_ra then
-				local ids_for_hover = bound_identifiers(owner)
-				if #ids_for_hover > 0 then
-					local hr = hover_is_ref(buf, ids_for_hover[1])
-					if hr ~= nil then
-						is_ref = hr
+
+			-- CRUCIAL fix: only draw for let-bindings when the binding itself is a &T
+			if typ == "let_declaration" then
+				local pat_ref = pattern_is_reference(owner, buf)
+				local hover_ref = false
+				if has_ra then
+					local ids = bound_identifiers(owner)
+					if #ids > 0 then
+						local hr = hover_is_ref(buf, ids[1])
+						hover_ref = (hr == true)
+					end
+				end
+				is_ref = pat_ref or hover_ref
+			else
+				-- optional refinement via RA for non-let owners
+				if not is_ref and has_ra then
+					local ids_for_hover = bound_identifiers(owner)
+					if #ids_for_hover > 0 then
+						local hr = hover_is_ref(buf, ids_for_hover[1])
+						if hr ~= nil then
+							is_ref = hr
+						end
 					end
 				end
 			end
@@ -436,13 +483,11 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 					local one = looks_oneline(sline, eline, owner, buf)
 					if one then
 						eline = sline
-					end -- clamp for one-liner
+					end
 
-					-- detect a closure span on the same statement and mark as dotted segment
 					local dot = find_closure_span_near(owner, buf)
 					local dot_s, dot_e = nil, nil
 					if dot and not one then
-						-- Intersect with our lane span (only if it actually overlaps)
 						local ds = math.max(sline, dot.cs)
 						local de = math.min(eline, dot.ce)
 						if de >= ds then
