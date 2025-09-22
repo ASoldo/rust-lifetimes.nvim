@@ -1,6 +1,6 @@
 -- Rust Lifetimes: visualize rough Rust lifetimes using Tree-sitter + rust-analyzer (optional).
--- Composite painter with proper columns, elbows, tees, compact one-liners (►'a),
--- and dotted closure segments (◦ + ┆ ... ┆).
+-- Closures are ignored for now to avoid rendering glitches.
+-- Composite painter with proper columns, elbows, tees, and compact one-liners (►'a).
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -34,13 +34,13 @@ local function clear_buf(buf)
 end
 
 -- ───────────────────── Query ─────────────────────
+-- NOTE: closures removed on purpose
 local query = ts.query.parse(
 	"rust",
 	[[
  (let_declaration)            @owner
  (parameter)                  @owner
  (self_parameter)             @owner
- (closure_parameters)         @owner
  (for_expression)             @owner
 ]]
 )
@@ -75,6 +75,7 @@ local function bound_identifiers(owner)
 	end
 
 	if typ == "closure_parameters" then
+		-- Not used now (closures ignored), but keep for future.
 		local out = {}
 		local function walk(n)
 			local nt = n:type()
@@ -164,10 +165,9 @@ local function hover_is_ref(buf, ident)
 			if txt and #txt > 0 and (txt:find("&%s*mut") or txt:find("&%S")) then
 				return true
 			end
-			return false
 		end
 	end
-	return nil
+	return false
 end
 
 local function syntax_is_ref(owner, buf)
@@ -210,98 +210,6 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- Pattern/type is explicitly a reference? (used to gate let-declarations)
-local function pattern_is_reference(owner, buf)
-	local pat = owner:field("pattern")[1]
-	local ty = owner:field("type")[1]
-	local function has_ref_node(n)
-		if not n then
-			return false
-		end
-		if n:type() == "reference_type" then
-			return true
-		end
-		for i = 0, n:child_count() - 1 do
-			if has_ref_node(n:child(i)) then
-				return true
-			end
-		end
-		return false
-	end
-	if has_ref_node(ty) then
-		return true
-	end
-	local ptxt = pat and (vim.treesitter.get_node_text(pat, buf) or "") or ""
-	if ptxt:find("&") then
-		return true
-	end
-	local ttxt = ty and (vim.treesitter.get_node_text(ty, buf) or "") or ""
-	if ttxt:find("&") then
-		return true
-	end
-	return false
-end
-
--- One-liner heuristic (true single-line)
-local function owner_is_oneline(owner, buf)
-	if owner:type() ~= "closure_parameters" then
-		return false
-	end
-	local cur = owner
-	while cur and cur:type() ~= "closure_expression" do
-		cur = cur:parent()
-	end
-	if not cur then
-		return false
-	end
-	local txt = vim.treesitter.get_node_text(cur, buf) or ""
-	return not txt:find("\n")
-end
-
-local function looks_oneline(s, e, owner, buf)
-	if e == s then
-		return true
-	end
-	if e == s + 1 then
-		return true
-	end
-	return owner_is_oneline(owner, buf)
-end
-
--- Find a closure on the same statement (for dotted segment)
-local function find_closure_span_near(owner, buf)
-	local sline = select(1, owner:range())
-	local anc, hops = owner:parent(), 0
-	while anc and hops < 4 do
-		local as = select(1, anc:range())
-		if as == sline then
-			break
-		end
-		anc = anc:parent()
-		hops = hops + 1
-	end
-	local base = anc or owner
-	local found
-	local function walk(n)
-		if found then
-			return
-		end
-		if n:type() == "closure_expression" then
-			local cs, _, ce = n:range()
-			found = { cs = cs, ce = ce }
-			return
-		end
-		for i = 0, n:child_count() - 1 do
-			walk(n:child(i))
-			if found then
-				return
-			end
-		end
-	end
-	walk(base)
-	return found
-end
-
 -- ────────────── composite painter per function/closure ──────────────
 local function paint_group(buf, lanes, token)
 	if #lanes == 0 then
@@ -330,7 +238,6 @@ local function paint_group(buf, lanes, token)
 
 	local CELL_TAIL = pad_cell("└►")
 	local CELL_BLNK = pad_cell(" ")
-	local CELL_DOT = pad_cell("┆")
 
 	local starts_on_line = {}
 	for idx, L in ipairs(lanes) do
@@ -347,38 +254,25 @@ local function paint_group(buf, lanes, token)
 
 		for idx, L in ipairs(lanes) do
 			local cell
-			local in_dotted = L.dot_s and L.dot_e and (line >= L.dot_s and line <= L.dot_e)
-
 			if line == L.s then
-				if L.one then
-					cell = pad_cell("►" .. L.label)
-				elseif in_dotted and L.dot_s == L.s then
-					cell = pad_cell("◦" .. L.label)
-				else
-					cell = pad_cell("┌" .. L.label)
-				end
+				cell = pad_cell((L.one and "►" or "┌") .. L.label)
 			elseif not L.one and line == L.e and L.e > L.s then
 				cell = CELL_TAIL
 			elseif not L.one and line > L.s and line < L.e then
-				if in_dotted then
-					cell = CELL_DOT
-				else
-					local tee = false
-					local starters = starts_on_line[line]
-					if starters then
-						for _, j in ipairs(starters) do
-							if j > idx then
-								tee = true
-								break
-							end
+				local tee = false
+				local starters = starts_on_line[line]
+				if starters then
+					for _, j in ipairs(starters) do
+						if j > idx then
+							tee = true
+							break
 						end
 					end
-					cell = pad_cell(tee and "├" or "│")
 				end
+				cell = pad_cell(tee and "├" or "│")
 			else
 				cell = CELL_BLNK
 			end
-
 			chunks[#chunks + 1] = { cell, lane_hl(idx) }
 		end
 
@@ -435,36 +329,24 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			return
 		end
 		if query.captures[id] == "owner" then
+			-- Extra safety: ignore closures even if they slip in
+			if owner:type() == "closure_parameters" then
+				goto continue
+			end
+
 			local gstart, gend = enclosing_fn_bounds(owner)
 			if gstart ~= last_group_start then
 				flush_group()
 				last_group_start = gstart
 			end
 
-			local typ = owner:type()
 			local is_ref = syntax_is_ref(owner, buf)
-
-			-- CRUCIAL fix: only draw for let-bindings when the binding itself is a &T
-			if typ == "let_declaration" then
-				local pat_ref = pattern_is_reference(owner, buf)
-				local hover_ref = false
-				if has_ra then
-					local ids = bound_identifiers(owner)
-					if #ids > 0 then
-						local hr = hover_is_ref(buf, ids[1])
-						hover_ref = (hr == true)
-					end
-				end
-				is_ref = pat_ref or hover_ref
-			else
-				-- optional refinement via RA for non-let owners
-				if not is_ref and has_ra then
-					local ids_for_hover = bound_identifiers(owner)
-					if #ids_for_hover > 0 then
-						local hr = hover_is_ref(buf, ids_for_hover[1])
-						if hr ~= nil then
-							is_ref = hr
-						end
+			if not is_ref and has_ra then
+				local ids_for_hover = bound_identifiers(owner)
+				if #ids_for_hover > 0 then
+					local hr = hover_is_ref(buf, ids_for_hover[1])
+					if hr ~= nil then
+						is_ref = hr
 					end
 				end
 			end
@@ -480,32 +362,22 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 						eline = sline
 					end
 
-					local one = looks_oneline(sline, eline, owner, buf)
-					if one then
+					-- Strict one-liner rule only
+					local is_one = (eline == sline)
+					if is_one then
 						eline = sline
-					end
-
-					local dot = find_closure_span_near(owner, buf)
-					local dot_s, dot_e = nil, nil
-					if dot and not one then
-						local ds = math.max(sline, dot.cs)
-						local de = math.min(eline, dot.ce)
-						if de >= ds then
-							dot_s, dot_e = ds, de
-						end
 					end
 
 					lanes[#lanes + 1] = {
 						s = sline,
 						e = eline,
-						one = one,
-						dot_s = dot_s,
-						dot_e = dot_e,
+						one = is_one,
 						label = "'" .. string.char(97 + (#lanes % 26)),
 					}
 				end
 			end
 		end
+		::continue::
 	end
 	flush_group()
 end
