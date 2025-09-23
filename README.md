@@ -81,7 +81,7 @@ The plugin uses distinct symbols and highlights to represent different categorie
 | `󰙧 'c `       | borrow `'c` | Closure parameter (immutable)           |
 | `󰻃 'd `       | borrow `'d` | Closure parameter (mutable)             |
 
-* **Start markers** (`󱔀`, `󰘻`, `󰙧`, `󰻃`, `󰓏`) appear on the line where the borrow starts.
+* **Start markers** (`󱔀`, `󰘻`, `󰄰`, `󰻃`, `󰓏`) appear on the line where the borrow starts.
 * **End markers** (``, `󰓏`) appear on the line of the last use.
 * **Single-line borrows** compact into one badge, e.g. `󱔀 'a `.
 
