@@ -1,6 +1,5 @@
--- Rust Lifetimes: visualize rough Rust lifetimes using Tree-sitter + rust-analyzer (optional).
--- Closures are ignored for now to avoid rendering glitches.
--- Composite painter with proper columns, elbows, tees, and compact one-liners (►'a).
+-- Rust Lifetimes: inline badges for defs/last-use with real lifetime names.
+-- No grid; closures included; color & symbols by usage category.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -8,18 +7,6 @@ local ts = vim.treesitter
 
 -- timeouts (ms)
 local HOVER_TIMEOUT, REFS_TIMEOUT = 1200, 1200
-
--- spacing knobs
-local RIGHT_MARGIN_PAD = 6 -- spaces from window edge
-local LANE_CELL = 5        -- visual columns per lane “cell”
-
--- optional lane colors; link to existing groups to avoid theme fights
-local LANE_HL = {
-	"DiagnosticHint",
-	"DiagnosticInfo",
-	"DiagnosticWarn",
-	"DiagnosticOk", -- Neovim 0.10+, falls back below
-}
 
 -- refresh control (debounce + generation guard)
 local GEN, TIMERS = {}, {}
@@ -34,26 +21,19 @@ local function clear_buf(buf)
 end
 
 -- ───────────────────── Query ─────────────────────
--- NOTE: closures removed on purpose
+-- Closures are back in.
 local query = ts.query.parse(
 	"rust",
 	[[
  (let_declaration)            @owner
  (parameter)                  @owner
  (self_parameter)             @owner
+ (closure_parameters)         @owner
  (for_expression)             @owner
 ]]
 )
 
 -- ───────────────────── utils ─────────────────────
-
-local function pad_cell(s)
-	local w = vim.fn.strdisplaywidth(s)
-	if w < LANE_CELL then
-		return s .. string.rep(" ", LANE_CELL - w)
-	end
-	return s
-end
 
 local function enclosing_fn_bounds(n)
 	local cur = n
@@ -75,7 +55,6 @@ local function bound_identifiers(owner)
 	end
 
 	if typ == "closure_parameters" then
-		-- Not used now (closures ignored), but keep for future.
 		local out = {}
 		local function walk(n)
 			local nt = n:type()
@@ -149,7 +128,29 @@ local function flatten_hover(contents)
 	return (table.concat(out, " "):gsub("%s+", " "))
 end
 
-local function hover_is_ref(buf, ident)
+-- Parse lifetime name and mutability from hover text
+local function parse_lifetime_from_hover(txt)
+	if not txt or txt == "" then
+		return nil, false, false
+	end
+	local is_static = txt:find("'static") ~= nil
+	local mut = txt:find("&%s*mut") ~= nil
+	-- Try & 'a patterns first
+	local name = txt:match("&%s*'%s*([%w_]+)")
+	-- Fallback: any 'a in type display
+	if not name then
+		name = txt:match("'(%w+)_?")
+	end
+	if is_static then
+		return "'static", mut, true
+	end
+	if name then
+		return "'" .. name, mut, false
+	end
+	return nil, mut, false
+end
+
+local function hover_info(buf, ident)
 	local srow, scol = ident:range()
 	local params = {
 		textDocument = vim.lsp.util.make_text_document_params(buf),
@@ -162,12 +163,12 @@ local function hover_is_ref(buf, ident)
 	for _, r in pairs(res) do
 		if r.result and r.result.contents then
 			local txt = flatten_hover(r.result.contents)
-			if txt and #txt > 0 and (txt:find("&%s*mut") or txt:find("&%S")) then
-				return true
+			if txt and #txt > 0 then
+				return txt
 			end
 		end
 	end
-	return false
+	return nil
 end
 
 local function syntax_is_ref(owner, buf)
@@ -210,79 +211,32 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- ────────────── composite painter per function/closure ──────────────
-local function paint_group(buf, lanes, token)
-	if #lanes == 0 then
-		return
+-- category -> symbol & hl
+local function classify(owner_typ, name, mut, is_static)
+	if is_static then
+		return {
+			start_sym = "✶",
+			end_sym = "✶",
+			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
+		}
 	end
-
-	local function lane_hl(idx)
-		local name = LANE_HL[((idx - 1) % #LANE_HL) + 1]
-		if name == "DiagnosticOk" and vim.fn.hlexists("DiagnosticOk") ~= 1 then
-			return "DiagnosticHint"
-		end
-		return name
+	if owner_typ == "closure_parameters" then
+		return { start_sym = "○", end_sym = "◄", hl = "DiagnosticInfo" }
 	end
-
-	local margin = string.rep(" ", RIGHT_MARGIN_PAD)
-
-	local minl, maxl = math.huge, -1
-	for _, L in ipairs(lanes) do
-		if L.s < minl then
-			minl = L.s
-		end
-		if L.e > maxl then
-			maxl = L.e
-		end
+	if mut then
+		return { start_sym = "◆", end_sym = "◄", hl = "DiagnosticWarn" }
 	end
+	return { start_sym = "●", end_sym = "◄", hl = "DiagnosticHint" }
+end
 
-	local CELL_TAIL = pad_cell("└►")
-	local CELL_BLNK = pad_cell(" ")
-
-	local starts_on_line = {}
-	for idx, L in ipairs(lanes) do
-		local t = starts_on_line[L.s] or {}
-		t[#t + 1] = idx
-		starts_on_line[L.s] = t
-	end
-
-	for line = minl, maxl do
-		if token and token ~= GEN[buf] then
-			return
-		end
-		local chunks = { { margin, "Comment" } }
-
-		for idx, L in ipairs(lanes) do
-			local cell
-			if line == L.s then
-				cell = pad_cell((L.one and "►" or "┌") .. L.label)
-			elseif not L.one and line == L.e and L.e > L.s then
-				cell = CELL_TAIL
-			elseif not L.one and line > L.s and line < L.e then
-				local tee = false
-				local starters = starts_on_line[line]
-				if starters then
-					for _, j in ipairs(starters) do
-						if j > idx then
-							tee = true
-							break
-						end
-					end
-				end
-				cell = pad_cell(tee and "├" or "│")
-			else
-				cell = CELL_BLNK
-			end
-			chunks[#chunks + 1] = { cell, lane_hl(idx) }
-		end
-
-		vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
-			virt_text = chunks,
-			virt_text_pos = "right_align",
-			hl_mode = "combine",
-			priority = 100,
-		})
-	end
+-- Place a right-aligned badge on a line
+local function place_badge(buf, line, text, hl)
+	vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
+		virt_text = { { text, hl } },
+		virt_text_pos = "right_align",
+		hl_mode = "combine",
+		priority = 100,
+	})
 end
 
 -- ───────────────────── refresh worker (token-guarded) ─────────────────────
@@ -315,71 +269,61 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 
-	local lanes, last_group_start = {}, -1
-	local function flush_group()
-		if token ~= GEN[buf] then
-			return
-		end
-		paint_group(buf, lanes, token)
-		lanes = {}
+	local gen_idx = 0
+	local function gen_label()
+		local ch = string.char(97 + (gen_idx % 26))
+		gen_idx = gen_idx + 1
+		return "'" .. ch
 	end
 
+	-- Collect and paint inline badges
 	for id, owner in query:iter_captures(root, buf, 0, -1) do
 		if token ~= GEN[buf] then
 			return
 		end
-		if query.captures[id] == "owner" then
-			-- Extra safety: ignore closures even if they slip in
-			if owner:type() == "closure_parameters" then
-				goto continue
+		if query.captures[id] ~= "owner" then
+			goto continue
+		end
+
+		local gstart, gend = enclosing_fn_bounds(owner)
+
+		-- Quick filter: skip if no & seen syntactically AND hover can’t confirm
+		local looks_ref = syntax_is_ref(owner, buf)
+
+		for _, ident in ipairs(bound_identifiers(owner)) do
+			local sline = select(1, ident:range())
+
+			local hover_txt = has_ra and hover_info(buf, ident) or nil
+			local h_name, h_mut, is_static = parse_lifetime_from_hover(hover_txt or "")
+
+			local is_ref = looks_ref or (hover_txt and (hover_txt:find("&") or hover_txt:find("'")))
+			if not is_ref then
+				goto next_ident
 			end
 
-			local gstart, gend = enclosing_fn_bounds(owner)
-			if gstart ~= last_group_start then
-				flush_group()
-				last_group_start = gstart
+			local eline = has_ra and last_use_line(buf, ident) or sline
+			if eline > gend then
+				eline = gend
+			end
+			if eline < sline then
+				eline = sline
 			end
 
-			local is_ref = syntax_is_ref(owner, buf)
-			if not is_ref and has_ra then
-				local ids_for_hover = bound_identifiers(owner)
-				if #ids_for_hover > 0 then
-					local hr = hover_is_ref(buf, ids_for_hover[1])
-					if hr ~= nil then
-						is_ref = hr
-					end
-				end
+			local label = h_name or gen_label()
+			local cat = classify(owner:type(), label, h_mut, is_static)
+
+			if sline == eline then
+				-- compact single-line badge
+				place_badge(buf, sline, cat.start_sym .. label .. cat.end_sym, cat.hl)
+			else
+				place_badge(buf, sline, cat.start_sym .. label, cat.hl)
+				place_badge(buf, eline, cat.end_sym .. label, cat.hl)
 			end
 
-			if is_ref then
-				for _, ident in ipairs(bound_identifiers(owner)) do
-					local sline = select(1, ident:range())
-					local eline = has_ra and last_use_line(buf, ident) or sline
-					if eline > gend then
-						eline = gend
-					end
-					if eline < sline then
-						eline = sline
-					end
-
-					-- Strict one-liner rule only
-					local is_one = (eline == sline)
-					if is_one then
-						eline = sline
-					end
-
-					lanes[#lanes + 1] = {
-						s = sline,
-						e = eline,
-						one = is_one,
-						label = "'" .. string.char(97 + (#lanes % 26)),
-					}
-				end
-			end
+			::next_ident::
 		end
 		::continue::
 	end
-	flush_group()
 end
 
 -- ───────────────────── debounce scheduler ─────────────────────
