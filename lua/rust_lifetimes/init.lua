@@ -194,7 +194,7 @@ end
 -- Fallback mutability from syntax (when hover isn’t conclusive)
 local function syntax_is_mut(owner, buf)
 	local txt = (vim.treesitter.get_node_text(owner, buf) or ""):gsub("%s+", " ")
-	return txt:find("&%s*mut") ~= nil or txt:find("%f[%w]ref%f[%W]%s*mut") ~= nil
+	return txt:find("&%s*mut") ~= nil or txt:find("%f[%w]ref%f[%W]%s*%f[%w]mut%f[%W]") ~= nil
 end
 
 local function last_use_line(buf, ident)
@@ -221,10 +221,7 @@ end
 local function is_reborrow(hover_txt, owner, buf)
 	local t = (hover_txt or ""):gsub("%s+", " ")
 	if t ~= "" then
-		if t:find("&%s*&") or t:find("&%s*mut%s*&") or t:find("&%s*&%s*mut") then
-			return true
-		end
-		if t:find("&&") then
+		if t:find("&%s*&") or t:find("&%s*mut%s*&") or t:find("&%s*&%s*mut") or t:find("&&") then
 			return true
 		end
 	end
@@ -262,7 +259,7 @@ local function classify(owner_typ, name, mut, is_static, reborrow)
 	return { start_sym = "", end_sym = "", hl = "DiagnosticHint" }
 end
 
--- Accumulate badges per line; render later with a space between each.
+-- Accumulate badges per line; render later with a middle-dot separator.
 local LINE_BADGES ---@type table<number, { [1]:string, [2]:string }[]>
 local LINE_SEEN ---@type table<number, table<string, boolean>>
 
@@ -381,12 +378,12 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		::continue::
 	end
 
-	-- Render badges with a single space between each on the same line
+	-- Render badges with a white middle dot between each on the same line
 	for line, chunks in pairs(LINE_BADGES) do
 		local spaced = {}
 		for i, c in ipairs(chunks) do
 			if i > 1 then
-				table.insert(spaced, { " ", "" })
+				table.insert(spaced, { "·", "RustLifetimesSep" })
 			end
 			table.insert(spaced, c)
 		end
@@ -431,6 +428,11 @@ end
 
 -- ───────────────────── setup ─────────────────────
 function M.setup()
+	-- white separator for middle dot
+	if not pcall(vim.api.nvim_get_hl_by_name, "RustLifetimesSep", true) then
+		vim.api.nvim_set_hl(0, "RustLifetimesSep", { fg = "#ffffff" })
+	end
+
 	vim.api.nvim_create_user_command("RustLifetimesRefresh", function()
 		schedule_refresh(vim.api.nvim_get_current_buf())
 	end, {})
