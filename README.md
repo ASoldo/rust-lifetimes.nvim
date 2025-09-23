@@ -1,4 +1,4 @@
-<img width="916" height="994" alt="image" src="https://github.com/user-attachments/assets/82a3d1cd-ada3-4122-aaba-c43b9b69c1e2" />
+<img width="915" height="990" alt="image" src="https://github.com/user-attachments/assets/6541f9a1-522f-4999-aacd-a0f619cde0b9" />
 
 # Rust Lifetimes NVIM Plugin
 
