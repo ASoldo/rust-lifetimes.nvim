@@ -73,17 +73,20 @@ When enabled, lifetimes appear in the right margin as **inline markers** with re
 
 The plugin uses distinct symbols and highlights to represent different categories of lifetimes:
 
-| Symbol          | Example     | Meaning                                 |
-| --------------- | ----------- | --------------------------------------- |
-| `󱔀 'a `       | borrow `'a` | Immutable borrow (default, non-mutable) |
-| `󰘻 'b `       | borrow `'b` | Mutable borrow                          |
-| `󰓏 'static 󰓏`  | `'static`   | Static lifetime reference               |
-| `󰙧 'c `       | borrow `'c` | Closure parameter (immutable)           |
-| `󰻃 'd `       | borrow `'d` | Closure parameter (mutable)             |
+| Symbol           | Example       | Meaning                                   |
+| ---------------- | ------------- | ----------------------------------------- |
+| ` 'a `        | borrow `'a`   | Immutable borrow (default)                |
+| `󰘻 'b `        | borrow `'b`   | Mutable borrow                            |
+| ` 'c `        | borrow `'c`   | **Closure** parameter (immutable)         |
+| `󰚕 'd `        | borrow `'d`   | **Closure** parameter (mutable)           |
+| `󱍸 'e `        | borrow `'e`   | **Reborrow / narrowed scope**             |
+| `󰓏 'static 󰓏`   | `'static`     | Static lifetime (begins/ends everywhere)  |
 
-* **Start markers** (`󱔀`, `󰘻`, `󰄰`, `󰻃`, `󰓏`) appear on the line where the borrow starts.
-* **End markers** (``, `󰓏`) appear on the line of the last use.
-* **Single-line borrows** compact into one badge, e.g. `󱔀 'a `.
+* **Start markers** (``, `󰘻`, ``, `󰚕`, `󱍸`, `󰓏`) appear on the line where the borrow starts.  
+* **End markers** (``, `󰓏`) appear on the line of the last use.  
+* **Single-line borrows** compact into one badge, e.g. ` 'a `.  
+
+> **Reborrow / narrowed scope (󱍸):** shown when a new `&` is taken from an existing reference (e.g., `let r2 = &*r1;`, `let s = &mut_ref[..]`), creating a short-lived view that lives strictly inside the parent borrow.
 
 ---
 
