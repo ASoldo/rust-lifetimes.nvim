@@ -217,10 +217,10 @@ local function classify(owner_typ, name, mut, is_static)
 	if owner_typ == "closure_parameters" then
 		if mut then
 			-- closure param, mutable
-			return { start_sym = "󰻃", end_sym = "", hl = "DiagnosticWarn" }
+			return { start_sym = "󰚕", end_sym = "", hl = "DiagnosticWarn" }
 		else
 			-- closure param, immutable
-			return { start_sym = "󰺕", end_sym = "", hl = "DiagnosticHint" }
+			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" }
 		end
 	end
 	if mut then
