@@ -73,16 +73,17 @@ When enabled, lifetimes appear in the right margin as **inline markers** with re
 
 The plugin uses distinct symbols and highlights to represent different categories of lifetimes:
 
-| Symbol         | Example        | Meaning                                 |
-| -------------- | -------------- | --------------------------------------- |
-| `󱔀 'a `       | borrow `'a`    | Immutable borrow (default, non-mutable) |
-| `󰘼 'b `       | borrow `'b`    | Mutable borrow                          |
-| `󰓏 'static 󰓏`  | `'static`      | Static lifetime reference               |
-| ` 'c `       | borrow `'c`    | Closure parameter lifetime              |
+| Symbol          | Example     | Meaning                                 |
+| --------------- | ----------- | --------------------------------------- |
+| `󱔀 'a `       | borrow `'a` | Immutable borrow (default, non-mutable) |
+| `󰘻 'b `       | borrow `'b` | Mutable borrow                          |
+| `󰓏 'static 󰓏`  | `'static`   | Static lifetime reference               |
+| `󰙧 'c `       | borrow `'c` | Closure parameter (immutable)           |
+| `󰻃 'd `       | borrow `'d` | Closure parameter (mutable)             |
 
-* **Start markers** (`󱔀`, `󰘼`, ``, `󰓏`) appear on the line where the borrow starts.  
-* **End markers** (``, `󰓏`) appear on the line of the last use.  
-* **Single-line borrows** compact into one badge, e.g. `󱔀 'a `.  
+* **Start markers** (`󱔀`, `󰘻`, `󰙧`, `󰻃`, `󰓏`) appear on the line where the borrow starts.
+* **End markers** (``, `󰓏`) appear on the line of the last use.
+* **Single-line borrows** compact into one badge, e.g. `󱔀 'a `.
 
 ---
 
