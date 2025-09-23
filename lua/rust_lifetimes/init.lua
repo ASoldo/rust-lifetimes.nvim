@@ -1,5 +1,4 @@
 -- Rust Lifetimes: inline badges for defs/last-use with real lifetime names.
--- No grid; closures included; color & symbols by usage category.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -229,14 +228,13 @@ local function classify(owner_typ, name, mut, is_static)
 	return { start_sym = "●", end_sym = "◄", hl = "DiagnosticHint" }
 end
 
--- Place a right-aligned badge on a line
+-- Accumulate badges per line in a single pass, then render with spaces.
+local LINE_BADGES ---@type table<number, { [1]:string, [2]:string }[]>
+
 local function place_badge(buf, line, text, hl)
-	vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
-		virt_text = { { text, hl } },
-		virt_text_pos = "right_align",
-		hl_mode = "combine",
-		priority = 100,
-	})
+	LINE_BADGES = LINE_BADGES or {}
+	LINE_BADGES[line] = LINE_BADGES[line] or {}
+	table.insert(LINE_BADGES[line], { text, hl })
 end
 
 -- ───────────────────── refresh worker (token-guarded) ─────────────────────
@@ -268,6 +266,8 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	end
 
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+
+	LINE_BADGES = {} -- reset per run
 
 	local gen_idx = 0
 	local function gen_label()
@@ -309,7 +309,10 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 				eline = sline
 			end
 
-			local label = h_name or gen_label()
+			-- Prefer real lifetime name; if not present, fall back to variable name; then generator.
+			local ident_text = vim.treesitter.get_node_text(ident, buf)
+			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
+
 			local cat = classify(owner:type(), label, h_mut, is_static)
 
 			if sline == eline then
@@ -323,6 +326,23 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			::next_ident::
 		end
 		::continue::
+	end
+
+	-- Render all badges, with a single space between them
+	for line, chunks in pairs(LINE_BADGES) do
+		local spaced = {}
+		for i, c in ipairs(chunks) do
+			if i > 1 then
+				table.insert(spaced, { " ", "" })
+			end
+			table.insert(spaced, c)
+		end
+		vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
+			virt_text = spaced,
+			virt_text_pos = "right_align",
+			hl_mode = "combine",
+			priority = 100,
+		})
 	end
 end
 
