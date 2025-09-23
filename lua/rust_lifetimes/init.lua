@@ -207,7 +207,7 @@ end
 -- category -> symbol & hl
 local function classify(owner_typ, name, mut, is_static)
 	if is_static then
-		-- infinity at both ends to imply “never ends”
+		-- static lifetime: both ends same to imply "never ends"
 		return {
 			start_sym = "󰓏",
 			end_sym = "󰓏",
@@ -215,10 +215,14 @@ local function classify(owner_typ, name, mut, is_static)
 		}
 	end
 	if owner_typ == "closure_parameters" then
-		return { start_sym = "", end_sym = "", hl = "DiagnosticInfo" }
+		if mut then
+			return { start_sym = "", end_sym = "", hl = "DiagnosticWarn" }
+		else
+			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" }
+		end
 	end
 	if mut then
-		return { start_sym = "󰘼", end_sym = "", hl = "DiagnosticWarn" }
+		return { start_sym = "󰘻", end_sym = "", hl = "DiagnosticWarn" }
 	end
 	return { start_sym = "󱔀", end_sym = "", hl = "DiagnosticHint" }
 end
