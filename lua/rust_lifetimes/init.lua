@@ -1,4 +1,4 @@
--- Rust Lifetimes: inline badges for defs/last-use with real lifetime names.
+-- Rust Lifetimes: inline badges for defs/last-use with real lifetime names + reborrow.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -204,23 +204,42 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- category -> symbol & hl
-local function classify(owner_typ, name, mut, is_static)
+-- Detect **reborrow** (reference-to-a-reference) from hover text.
+local function is_reborrow(hover_txt)
+	if not hover_txt or hover_txt == "" then
+		return false
+	end
+	-- Normalize spaces to make matching robust
+	local t = hover_txt:gsub("%s+", " ")
+	-- Patterns that indicate &&T, &mut &T, & &mut T, etc.
+	if t:find("&%s*&") or t:find("&%s*mut%s*&") or t:find("&%s*&%s*mut") then
+		return true
+	end
+	-- Also catch common rendered forms like "&&str", "&mut &Foo"
+	if t:find("&&[%w_%[%]%(%)%{%}%<%>:%., ]") or t:find("&mut%s*&") or t:find("&%s*&mut") then
+		return true
+	end
+	return false
+end
+
+-- category -> symbol & hl (now includes reborrow)
+local function classify(owner_typ, name, mut, is_static, reborrow)
 	if is_static then
-		-- static lifetime: both ends same to imply "never ends"
 		return {
 			start_sym = "󰓏",
 			end_sym = "󰓏",
 			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
 		}
 	end
+	if reborrow then
+		-- 󱍸 = narrow/reborrow; color by mutability
+		return { start_sym = "󱍸", end_sym = "", hl = (mut and "DiagnosticWarn" or "DiagnosticInfo") }
+	end
 	if owner_typ == "closure_parameters" then
 		if mut then
-			-- closure param, mutable
-			return { start_sym = "󰚕", end_sym = "", hl = "DiagnosticWarn" }
+			return { start_sym = "󰚕", end_sym = "", hl = "DiagnosticWarn" } -- mutable closure capture
 		else
-			-- closure param, immutable
-			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" }
+			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" } -- immutable closure capture
 		end
 	end
 	if mut then
@@ -238,7 +257,6 @@ local function queue_badge(line, text, hl, label_key)
 	LINE_SEEN = LINE_SEEN or {}
 	LINE_BADGES[line] = LINE_BADGES[line] or {}
 	LINE_SEEN[line] = LINE_SEEN[line] or {}
-	-- de-dupe per line/label
 	if label_key and LINE_SEEN[line][label_key] then
 		return
 	end
@@ -294,8 +312,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			goto continue
 		end
 
-		-- Skip parameters that belong to a closure; we'll handle them via the
-		-- enclosing closure_parameters owner to avoid double badges.
+		-- Avoid double-badging closure param nodes via parameter capture
 		if owner:type() == "parameter" then
 			local p = owner:parent()
 			if p and p:type() == "closure_parameters" then
@@ -311,6 +328,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 			local hover_txt = has_ra and hover_info(buf, ident) or nil
 			local h_name, h_mut, is_static = parse_lifetime_from_hover(hover_txt or "")
+			local reborrow = is_reborrow(hover_txt or "")
 			local is_ref = looks_ref or (hover_txt and (hover_txt:find("&") or hover_txt:find("'")))
 			if not is_ref then
 				goto next_ident
@@ -326,12 +344,11 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 			local ident_text = vim.treesitter.get_node_text(ident, buf)
 			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
-			local cat = classify(owner:type(), label, h_mut, is_static)
+			local cat = classify(owner:type(), label, h_mut, is_static, reborrow)
 
-			-- spaces, no brackets
 			local start_text = cat.start_sym .. " " .. label
 			local end_text = cat.end_sym .. " " .. label
-			local key = label .. "|" .. (owner:type() or "")
+			local key = label .. "|" .. (owner:type() or "") .. (reborrow and "|rb" or "")
 
 			if sline == eline then
 				queue_badge(sline, start_text .. " " .. cat.end_sym, cat.hl, key)
@@ -345,7 +362,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		::continue::
 	end
 
-	-- Render with single spaces between badges on the same line
+	-- Render badges with a single space between each on the same line
 	for line, chunks in pairs(LINE_BADGES) do
 		local spaced = {}
 		for i, c in ipairs(chunks) do
