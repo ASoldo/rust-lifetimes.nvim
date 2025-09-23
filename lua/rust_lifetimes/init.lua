@@ -214,18 +214,18 @@ end
 local function classify(owner_typ, name, mut, is_static)
 	if is_static then
 		return {
-			start_sym = "✶",
-			end_sym = "✶",
+			start_sym = "󰓏",
+			end_sym = "",
 			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
 		}
 	end
 	if owner_typ == "closure_parameters" then
-		return { start_sym = "○", end_sym = "◄", hl = "DiagnosticInfo" }
+		return { start_sym = "", end_sym = "", hl = "DiagnosticInfo" }
 	end
 	if mut then
-		return { start_sym = "◆", end_sym = "◄", hl = "DiagnosticWarn" }
+		return { start_sym = "󰘼", end_sym = "", hl = "DiagnosticWarn" }
 	end
-	return { start_sym = "●", end_sym = "◄", hl = "DiagnosticHint" }
+	return { start_sym = "󱔀", end_sym = "", hl = "DiagnosticHint" }
 end
 
 -- Accumulate badges per line in a single pass, then render with spaces.
