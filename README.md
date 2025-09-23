@@ -2,7 +2,7 @@
 
 # Rust Lifetimes NVIM Plugin
 
-Visualize rough Rust lifetimes directly in Neovim using Tree-sitter and rust-analyzer. This plugin draws lane-style annotations in the right margin to help understand borrow scopes and overlaps.
+Visualize rough Rust lifetimes directly in Neovim using Tree-sitter and rust-analyzer. This plugin draws inline annotations in the right margin to help understand borrow scopes and overlaps.
 
 ---
 
@@ -65,7 +65,24 @@ vim.keymap.set("n", "<leader>rt", ":RustLifetimesToggle<CR>",  { desc = "Toggle 
 
 ## Preview
 
-When enabled, lifetimes appear in the right margin as vertical lanes with labels `'a`, `'b`, `'c`, etc. Each borrow scope is drawn with distinct highlighting, making it easier to reason about overlapping references.
+When enabled, lifetimes appear in the right margin as **inline markers** with real labels (from `rust-analyzer` hover) or fallback labels `'a`, `'b`, `'c` when not available. Multiple lifetimes on the same line are separated by a space for readability.
+
+---
+
+## Legend
+
+The plugin uses distinct symbols and highlights to represent different categories of lifetimes:
+
+| Symbol      | Example     | Meaning                                 |
+| ----------- | ----------- | --------------------------------------- |
+| `● 'a◄`     | borrow `'a` | Immutable borrow (default, non-mutable) |
+| `◆ 'b◄`     | borrow `'b` | Mutable borrow                          |
+| `✶'static✶` | `'static`   | Static lifetime reference               |
+| `○ 'c◄`     | borrow `'c` | Closure parameter lifetime              |
+
+* Start markers (●, ◆, ○, ✶) appear on the line where the borrow starts.
+* End markers (◄, ✶) appear on the line of the last use.
+* Single-line borrows compact into one badge, e.g. `● 'a◄`.
 
 ---
 
