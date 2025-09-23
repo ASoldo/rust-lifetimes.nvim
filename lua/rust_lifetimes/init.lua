@@ -383,7 +383,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		local spaced = {}
 		for i, c in ipairs(chunks) do
 			if i > 1 then
-				table.insert(spaced, { "  ", "RustLifetimesSep" })
+				table.insert(spaced, { " ", "RustLifetimesSep" })
 			end
 			table.insert(spaced, c)
 		end
