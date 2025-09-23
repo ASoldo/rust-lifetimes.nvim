@@ -1,4 +1,4 @@
--- Rust Lifetimes: inline badges for defs/last-use with real lifetime names + reborrow.
+-- Rust Lifetimes: inline badges for defs/last-use with real lifetime names + reborrow + ref/ref mut patterns.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("rust-lifetimes")
@@ -20,6 +20,7 @@ local function clear_buf(buf)
 end
 
 -- ───────────────────── Query ─────────────────────
+-- Add pattern forms so `&pat`, `ref`, and `ref mut` get badges too.
 local query = ts.query.parse(
 	"rust",
 	[[
@@ -28,6 +29,8 @@ local query = ts.query.parse(
  (self_parameter)             @owner
  (closure_parameters)         @owner
  (for_expression)             @owner
+ (reference_pattern)          @owner
+ (ref_pattern)                @owner
 ]]
 )
 
@@ -57,6 +60,7 @@ local function bound_identifiers(owner)
 		local function walk(n)
 			local nt = n:type()
 			if nt == "identifier" then
+				-- Avoid grabbing type idents
 				local p = n:parent()
 				while p and p ~= owner do
 					local pt = p:type()
@@ -76,8 +80,9 @@ local function bound_identifiers(owner)
 		return out
 	end
 
-	local pat = owner:field("pattern")[1]
+	local pat = owner:field("pattern") and owner:field("pattern")[1] or nil
 	local out = {}
+
 	local function walk_pattern(n)
 		if not n then
 			return
@@ -90,9 +95,11 @@ local function bound_identifiers(owner)
 			walk_pattern(n:child(i))
 		end
 	end
+
 	if pat then
 		walk_pattern(pat)
 	else
+		-- fallback: grab first identifier under owner
 		local function first_ident(n)
 			if n:type() == "identifier" then
 				table.insert(out, n)
@@ -181,7 +188,13 @@ local function syntax_is_ref(owner, buf)
 		return true
 	end
 	local txt = vim.treesitter.get_node_text(owner, buf) or ""
-	return txt:find("&") ~= nil
+	return txt:find("&") ~= nil or txt:find("%f[%w]ref%f[%W]") ~= nil
+end
+
+-- Fallback mutability from syntax (when hover isn’t conclusive)
+local function syntax_is_mut(owner, buf)
+	local txt = (vim.treesitter.get_node_text(owner, buf) or ""):gsub("%s+", " ")
+	return txt:find("&%s*mut") ~= nil or txt:find("%f[%w]ref%f[%W]%s*mut") ~= nil
 end
 
 local function last_use_line(buf, ident)
@@ -204,42 +217,43 @@ local function last_use_line(buf, ident)
 	return maxl
 end
 
--- Detect **reborrow** (reference-to-a-reference) from hover text.
-local function is_reborrow(hover_txt)
-	if not hover_txt or hover_txt == "" then
-		return false
+-- Detect **reborrow** (reference-to-a-reference) from hover OR syntax
+local function is_reborrow(hover_txt, owner, buf)
+	local t = (hover_txt or ""):gsub("%s+", " ")
+	if t ~= "" then
+		if t:find("&%s*&") or t:find("&%s*mut%s*&") or t:find("&%s*&%s*mut") then
+			return true
+		end
+		if t:find("&&") then
+			return true
+		end
 	end
-	-- Normalize spaces to make matching robust
-	local t = hover_txt:gsub("%s+", " ")
-	-- Patterns that indicate &&T, &mut &T, & &mut T, etc.
-	if t:find("&%s*&") or t:find("&%s*mut%s*&") or t:find("&%s*&%s*mut") then
-		return true
-	end
-	-- Also catch common rendered forms like "&&str", "&mut &Foo"
-	if t:find("&&[%w_%[%]%(%)%{%}%<%>:%., ]") or t:find("&mut%s*&") or t:find("&%s*&mut") then
+	local s = (vim.treesitter.get_node_text(owner, buf) or ""):gsub("%s+", " ")
+	if s:find("&&") or s:find("&%s*&") or s:find("&%s*mut%s*&") or s:find("&%s*&%s*mut") then
 		return true
 	end
 	return false
 end
 
--- category -> symbol & hl (now includes reborrow)
+-- category -> symbol & hl (includes reborrow)
 local function classify(owner_typ, name, mut, is_static, reborrow)
 	if is_static then
+		-- same symbol both ends, to imply "never ends"
 		return {
 			start_sym = "󰓏",
-			end_sym = "󰰣",
+			end_sym = "󰓏",
 			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
 		}
 	end
 	if reborrow then
-		-- 󱍸 = narrow/reborrow; color by mutability
+		-- 󱍸 = reborrow/narrowed scope; info for immut, warn for mut
 		return { start_sym = "󱍸", end_sym = "", hl = (mut and "DiagnosticWarn" or "DiagnosticInfo") }
 	end
 	if owner_typ == "closure_parameters" then
 		if mut then
-			return { start_sym = "󰚕", end_sym = "", hl = "DiagnosticWarn" } -- mutable closure capture
+			return { start_sym = "󰚕", end_sym = "", hl = "DiagnosticWarn" } -- closure param (mut)
 		else
-			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" } -- immutable closure capture
+			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" } -- closure param (immut)
 		end
 	end
 	if mut then
@@ -312,7 +326,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			goto continue
 		end
 
-		-- Avoid double-badging closure param nodes via parameter capture
+		-- Avoid double-badging closure params via parameter capture
 		if owner:type() == "parameter" then
 			local p = owner:parent()
 			if p and p:type() == "closure_parameters" then
@@ -328,7 +342,8 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 			local hover_txt = has_ra and hover_info(buf, ident) or nil
 			local h_name, h_mut, is_static = parse_lifetime_from_hover(hover_txt or "")
-			local reborrow = is_reborrow(hover_txt or "")
+			local syn_mut = syntax_is_mut(owner, buf)
+			local reborrow = is_reborrow(hover_txt or "", owner, buf)
 			local is_ref = looks_ref or (hover_txt and (hover_txt:find("&") or hover_txt:find("'")))
 			if not is_ref then
 				goto next_ident
@@ -344,11 +359,15 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 			local ident_text = vim.treesitter.get_node_text(ident, buf)
 			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
-			local cat = classify(owner:type(), label, h_mut, is_static, reborrow)
+			local cat = classify(owner:type(), label, (h_mut or syn_mut), is_static, reborrow)
 
 			local start_text = cat.start_sym .. " " .. label
 			local end_text = cat.end_sym .. " " .. label
-			local key = label .. "|" .. (owner:type() or "") .. (reborrow and "|rb" or "")
+			local key = label
+				.. "|"
+				.. (owner:type() or "")
+				.. (reborrow and "|rb" or "")
+				.. ((h_mut or syn_mut) and "|mut" or "")
 
 			if sline == eline then
 				queue_badge(sline, start_text .. " " .. cat.end_sym, cat.hl, key)
