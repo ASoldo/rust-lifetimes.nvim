@@ -227,7 +227,7 @@ local function classify(owner_typ, name, mut, is_static, reborrow)
 	if is_static then
 		return {
 			start_sym = "󰓏",
-			end_sym = "󰓏",
+			end_sym = "󰰣",
 			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
 		}
 	end

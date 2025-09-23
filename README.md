@@ -80,10 +80,10 @@ The plugin uses distinct symbols and highlights to represent different categorie
 | ` 'c `        | borrow `'c`   | **Closure** parameter (immutable)         |
 | `󰚕 'd `        | borrow `'d`   | **Closure** parameter (mutable)           |
 | `󱍸 'e `        | borrow `'e`   | **Reborrow / narrowed scope**             |
-| `󰓏 'static 󰓏`   | `'static`     | Static lifetime (begins/ends everywhere)  |
+| `󰓏 'static 󰰣`   | `'static`     | Static lifetime (begins/ends everywhere)  |
 
 * **Start markers** (``, `󰘻`, ``, `󰚕`, `󱍸`, `󰓏`) appear on the line where the borrow starts.  
-* **End markers** (``, `󰓏`) appear on the line of the last use.  
+* **End markers** (``, `󰰣`) appear on the line of the last use.  
 * **Single-line borrows** compact into one badge, e.g. ` 'a `.  
 
 > **Reborrow / narrowed scope (󱍸):** shown when a new `&` is taken from an existing reference (e.g., `let r2 = &*r1;`, `let s = &mut_ref[..]`), creating a short-lived view that lives strictly inside the parent borrow.
