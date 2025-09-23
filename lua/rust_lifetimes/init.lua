@@ -216,9 +216,11 @@ local function classify(owner_typ, name, mut, is_static)
 	end
 	if owner_typ == "closure_parameters" then
 		if mut then
-			return { start_sym = "", end_sym = "", hl = "DiagnosticWarn" }
+			-- closure param, mutable
+			return { start_sym = "󰻃", end_sym = "", hl = "DiagnosticWarn" }
 		else
-			return { start_sym = "", end_sym = "", hl = "DiagnosticHint" }
+			-- closure param, immutable
+			return { start_sym = "󰙧", end_sym = "", hl = "DiagnosticHint" }
 		end
 	end
 	if mut then
@@ -229,10 +231,20 @@ end
 
 -- Accumulate badges per line; render later with a space between each.
 local LINE_BADGES ---@type table<number, { [1]:string, [2]:string }[]>
+local LINE_SEEN ---@type table<number, table<string, boolean>>
 
-local function queue_badge(line, text, hl)
+local function queue_badge(line, text, hl, label_key)
 	LINE_BADGES = LINE_BADGES or {}
+	LINE_SEEN = LINE_SEEN or {}
 	LINE_BADGES[line] = LINE_BADGES[line] or {}
+	LINE_SEEN[line] = LINE_SEEN[line] or {}
+	-- de-dupe per line/label
+	if label_key and LINE_SEEN[line][label_key] then
+		return
+	end
+	if label_key then
+		LINE_SEEN[line][label_key] = true
+	end
 	table.insert(LINE_BADGES[line], { text, hl })
 end
 
@@ -265,7 +277,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	end
 
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-	LINE_BADGES = {}
+	LINE_BADGES, LINE_SEEN = {}, {}
 
 	local gen_idx = 0
 	local function gen_label()
@@ -280,6 +292,15 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		end
 		if query.captures[id] ~= "owner" then
 			goto continue
+		end
+
+		-- Skip parameters that belong to a closure; we'll handle them via the
+		-- enclosing closure_parameters owner to avoid double badges.
+		if owner:type() == "parameter" then
+			local p = owner:parent()
+			if p and p:type() == "closure_parameters" then
+				goto continue
+			end
 		end
 
 		local gstart, gend = enclosing_fn_bounds(owner)
@@ -307,16 +328,16 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
 			local cat = classify(owner:type(), label, h_mut, is_static)
 
-			-- use spaces instead of brackets
+			-- spaces, no brackets
 			local start_text = cat.start_sym .. " " .. label
 			local end_text = cat.end_sym .. " " .. label
+			local key = label .. "|" .. (owner:type() or "")
 
 			if sline == eline then
-				-- compact single-line: include trailing end symbol with a space
-				queue_badge(sline, start_text .. " " .. cat.end_sym, cat.hl)
+				queue_badge(sline, start_text .. " " .. cat.end_sym, cat.hl, key)
 			else
-				queue_badge(sline, start_text, cat.hl)
-				queue_badge(eline, end_text, cat.hl)
+				queue_badge(sline, start_text, cat.hl, key)
+				queue_badge(eline, end_text, cat.hl, key .. "#end")
 			end
 
 			::next_ident::
