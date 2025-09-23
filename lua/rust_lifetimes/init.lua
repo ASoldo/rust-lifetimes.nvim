@@ -303,11 +303,13 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
 			local cat = classify(owner:type(), label, h_mut, is_static)
 
-			local start_text = cat.start_sym .. "[" .. label .. "]"
-			local end_text = cat.end_sym .. "[" .. label .. "]"
+			-- use spaces instead of brackets
+			local start_text = cat.start_sym .. " " .. label
+			local end_text = cat.end_sym .. " " .. label
 
 			if sline == eline then
-				queue_badge(sline, start_text .. cat.end_sym, cat.hl) -- single-line compact
+				-- compact single-line: include trailing end symbol with a space
+				queue_badge(sline, start_text .. " " .. cat.end_sym, cat.hl)
 			else
 				queue_badge(sline, start_text, cat.hl)
 				queue_badge(eline, end_text, cat.hl)
