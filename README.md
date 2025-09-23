@@ -14,9 +14,15 @@ With **Lazy.nvim**:
 return {
   {
     "ASoldo/rust-lifetimes.nvim",
-    event = { "BufReadPre *.rs", "BufNewFile *.rs" },
+    ft = { "rust" },
     config = function()
-      require("rust_lifetimes").setup()
+      local ok, mod = pcall(require, "rust_lifetimes")
+      if ok and type(mod.setup) == "function" then
+        mod.setup()
+      else
+        vim.notify("rust-lifetimes.nvim: require('rust_lifetimes') failed", vim.log.levels.ERROR)
+        return
+      end
       vim.schedule(function()
         local buf = vim.api.nvim_get_current_buf()
         if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == "rust" then
