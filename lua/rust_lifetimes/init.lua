@@ -20,7 +20,6 @@ local function clear_buf(buf)
 end
 
 -- ───────────────────── Query ─────────────────────
--- Closures are back in.
 local query = ts.query.parse(
 	"rust",
 	[[
@@ -134,12 +133,7 @@ local function parse_lifetime_from_hover(txt)
 	end
 	local is_static = txt:find("'static") ~= nil
 	local mut = txt:find("&%s*mut") ~= nil
-	-- Try & 'a patterns first
-	local name = txt:match("&%s*'%s*([%w_]+)")
-	-- Fallback: any 'a in type display
-	if not name then
-		name = txt:match("'(%w+)_?")
-	end
+	local name = txt:match("&%s*'%s*([%w_]+)") or txt:match("'(%w+)_?")
 	if is_static then
 		return "'static", mut, true
 	end
@@ -213,9 +207,10 @@ end
 -- category -> symbol & hl
 local function classify(owner_typ, name, mut, is_static)
 	if is_static then
+		-- infinity at both ends to imply “never ends”
 		return {
 			start_sym = "󰓏",
-			end_sym = "",
+			end_sym = "󰓏",
 			hl = (vim.fn.hlexists("DiagnosticOk") == 1 and "DiagnosticOk" or "DiagnosticHint"),
 		}
 	end
@@ -228,10 +223,10 @@ local function classify(owner_typ, name, mut, is_static)
 	return { start_sym = "󱔀", end_sym = "", hl = "DiagnosticHint" }
 end
 
--- Accumulate badges per line in a single pass, then render with spaces.
+-- Accumulate badges per line; render later with a space between each.
 local LINE_BADGES ---@type table<number, { [1]:string, [2]:string }[]>
 
-local function place_badge(buf, line, text, hl)
+local function queue_badge(line, text, hl)
 	LINE_BADGES = LINE_BADGES or {}
 	LINE_BADGES[line] = LINE_BADGES[line] or {}
 	table.insert(LINE_BADGES[line], { text, hl })
@@ -266,8 +261,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	end
 
 	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-
-	LINE_BADGES = {} -- reset per run
+	LINE_BADGES = {}
 
 	local gen_idx = 0
 	local function gen_label()
@@ -276,7 +270,6 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		return "'" .. ch
 	end
 
-	-- Collect and paint inline badges
 	for id, owner in query:iter_captures(root, buf, 0, -1) do
 		if token ~= GEN[buf] then
 			return
@@ -286,8 +279,6 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		end
 
 		local gstart, gend = enclosing_fn_bounds(owner)
-
-		-- Quick filter: skip if no & seen syntactically AND hover can’t confirm
 		local looks_ref = syntax_is_ref(owner, buf)
 
 		for _, ident in ipairs(bound_identifiers(owner)) do
@@ -295,7 +286,6 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 
 			local hover_txt = has_ra and hover_info(buf, ident) or nil
 			local h_name, h_mut, is_static = parse_lifetime_from_hover(hover_txt or "")
-
 			local is_ref = looks_ref or (hover_txt and (hover_txt:find("&") or hover_txt:find("'")))
 			if not is_ref then
 				goto next_ident
@@ -309,18 +299,18 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 				eline = sline
 			end
 
-			-- Prefer real lifetime name; if not present, fall back to variable name; then generator.
 			local ident_text = vim.treesitter.get_node_text(ident, buf)
 			local label = h_name or (ident_text and ("'" .. ident_text)) or gen_label()
-
 			local cat = classify(owner:type(), label, h_mut, is_static)
 
+			local start_text = cat.start_sym .. "[" .. label .. "]"
+			local end_text = cat.end_sym .. "[" .. label .. "]"
+
 			if sline == eline then
-				-- compact single-line badge
-				place_badge(buf, sline, cat.start_sym .. label .. cat.end_sym, cat.hl)
+				queue_badge(sline, start_text .. cat.end_sym, cat.hl) -- single-line compact
 			else
-				place_badge(buf, sline, cat.start_sym .. label, cat.hl)
-				place_badge(buf, eline, cat.end_sym .. label, cat.hl)
+				queue_badge(sline, start_text, cat.hl)
+				queue_badge(eline, end_text, cat.hl)
 			end
 
 			::next_ident::
@@ -328,7 +318,7 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 		::continue::
 	end
 
-	-- Render all badges, with a single space between them
+	-- Render with single spaces between badges on the same line
 	for line, chunks in pairs(LINE_BADGES) do
 		local spaced = {}
 		for i, c in ipairs(chunks) do
@@ -361,7 +351,6 @@ local function schedule_refresh(buf)
 		TIMERS[buf]:close()
 		TIMERS[buf] = nil
 	end
-
 	local timer = vim.uv.new_timer()
 	TIMERS[buf] = timer
 	timer:start(DEBOUNCE_MS, 0, function()
