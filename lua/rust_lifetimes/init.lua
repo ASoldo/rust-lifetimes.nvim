@@ -386,9 +386,12 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	end
 
 	-- Render badges with a white middle dot between each on the same line
-	local line_count = vim.api.nvim_buf_line_count(buf)
 	for line, chunks in pairs(LINE_BADGES) do
-		if line >= 0 and line < line_count then
+		local ok_count, current_count = pcall(vim.api.nvim_buf_line_count, buf)
+		if not ok_count then
+			return
+		end
+		if line >= 0 and line < current_count then
 			local spaced = {}
 			for i, c in ipairs(chunks) do
 				if i > 1 then
@@ -396,12 +399,15 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 				end
 				table.insert(spaced, c)
 			end
-			vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
+			local ok, err = pcall(vim.api.nvim_buf_set_extmark, buf, ns, line, 0, {
 				virt_text = spaced,
 				virt_text_pos = "right_align",
 				hl_mode = "combine",
 				priority = 100,
 			})
+			if not ok and (not err or not err:find("Invalid 'line'")) then
+				vim.notify(("[rust-lifetimes] %s"):format(err), vim.log.levels.WARN)
+			end
 		end
 	end
 end
