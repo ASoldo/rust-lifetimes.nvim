@@ -36,7 +36,7 @@ local query = ts.query.parse(
 
 -- ───────────────────── utils ─────────────────────
 
-local function enclosing_fn_bounds(n)
+local function enclosing_fn_bounds(buf, n)
 	local cur = n
 	while cur do
 		local t = cur:type()
@@ -46,7 +46,7 @@ local function enclosing_fn_bounds(n)
 		end
 		cur = cur:parent()
 	end
-	return 0, vim.api.nvim_buf_line_count(0) - 1
+	return 0, vim.api.nvim_buf_line_count(buf) - 1
 end
 
 local function bound_identifiers(owner)
@@ -331,11 +331,15 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			end
 		end
 
-		local gstart, gend = enclosing_fn_bounds(owner)
+		local _, gend = enclosing_fn_bounds(buf, owner)
 		local looks_ref = syntax_is_ref(owner, buf)
 
 		for _, ident in ipairs(bound_identifiers(owner)) do
 			local sline = select(1, ident:range())
+			local last_line = math.max(vim.api.nvim_buf_line_count(buf) - 1, 0)
+			if sline > last_line then
+				goto next_ident
+			end
 
 			local hover_txt = has_ra and hover_info(buf, ident) or nil
 			local h_name, h_mut, is_static = parse_lifetime_from_hover(hover_txt or "")
@@ -352,6 +356,9 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 			end
 			if eline < sline then
 				eline = sline
+			end
+			if eline > last_line then
+				eline = last_line
 			end
 
 			local ident_text = vim.treesitter.get_node_text(ident, buf)
@@ -379,20 +386,23 @@ _G.__rust_lifetimes_refresh = function(buf, token)
 	end
 
 	-- Render badges with a white middle dot between each on the same line
+	local line_count = vim.api.nvim_buf_line_count(buf)
 	for line, chunks in pairs(LINE_BADGES) do
-		local spaced = {}
-		for i, c in ipairs(chunks) do
-			if i > 1 then
-				table.insert(spaced, { "  ", "RustLifetimesSep" })
+		if line >= 0 and line < line_count then
+			local spaced = {}
+			for i, c in ipairs(chunks) do
+				if i > 1 then
+					table.insert(spaced, { "  ", "RustLifetimesSep" })
+				end
+				table.insert(spaced, c)
 			end
-			table.insert(spaced, c)
+			vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
+				virt_text = spaced,
+				virt_text_pos = "right_align",
+				hl_mode = "combine",
+				priority = 100,
+			})
 		end
-		vim.api.nvim_buf_set_extmark(buf, ns, line, 0, {
-			virt_text = spaced,
-			virt_text_pos = "right_align",
-			hl_mode = "combine",
-			priority = 100,
-		})
 	end
 end
 
