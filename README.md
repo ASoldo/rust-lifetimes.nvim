@@ -1,3 +1,5 @@
+
+
 <img width="916" height="996" alt="image" src="https://github.com/user-attachments/assets/94a623ab-1b09-48bd-991f-fc1372a79139" />
 
 # Rust Lifetimes NVIM Plugin
@@ -41,7 +43,7 @@ return {
 ### Vanilla Neovim
 
 ```lua
-vim.keymap.set("n", "<leader>r",  { desc = "Rust" })
+vim.keymap.set("n", "<leader>r", nil, { desc = "Rust" })
 vim.keymap.set("n", "<leader>rl", ":RustLifetimesRefresh<CR>", { desc = "Refresh lifetimes" })
 vim.keymap.set("n", "<leader>rt", ":RustLifetimesToggle<CR>",  { desc = "Toggle lifetimes" })
 ```
